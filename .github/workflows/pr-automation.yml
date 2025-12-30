@@ -96,6 +96,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install jq for parsing coverage
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Run tests with coverage
         id: tests
         run: npm run test:coverage
@@ -191,8 +194,6 @@ jobs:
       - name: Run secret scanning with gitleaks
         id: gitleaks
         uses: gitleaks/gitleaks-action@v2
-        with:
-          config-path: .gitleaks.toml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
@@ -259,27 +260,45 @@ jobs:
         id: build
         run: npm run build
 
-      - name: Start server in background
+      - name: Start server in background with health check
+        id: server
         run: |
           npm start &
-          sleep 5
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          # Wait for server to be ready
+          for i in {1..10}; do
+            if curl -s -f http://localhost:3000/health > /dev/null; then
+              echo "Server is up after $i attempts"
+              break
+            fi
+            sleep 2
+          done
 
       - name: Validate endpoints
         id: validate
         run: |
           curl -f http://localhost:3000/health && echo "Health endpoint: OK"
-          curl -f http://localhost:3000/api/status && echo "Status endpoint: OK"
+          curl -f http://localhost:3000/ && echo "Root endpoint: OK"
+          curl -f http://localhost:3000/status/deployment && echo "Deployment status endpoint: OK"
           echo "validation_exit_code=$?" >> $GITHUB_ENV
         continue-on-error: true
 
       - name: Stop server
-        run: pkill -f "node src/app.js" || true
+        if: always()
+        run: |
+          if [ -n "$SERVER_PID" ]; then
+            kill $SERVER_PID 2>/dev/null || true
+          fi
+          pkill -f "node src/app.js" 2>/dev/null || true
 
       - name: Create deployment preview artifact
+        if: always()
         run: |
-          zip -r deployment-preview.zip . -x "node_modules/*" -x ".git/*" -x "coverage/*"
+          zip -r deployment-preview.zip . -x "node_modules/*" -x ".git/*" -x "coverage/*" -x "*.zip"
 
       - name: Upload deployment preview artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: deployment-preview
@@ -303,7 +322,8 @@ jobs:
             comment += `- ✅ Build completed successfully.\n`;
             if (buildPassed) {
               comment += `- ✅ Health endpoint accessible.\n`;
-              comment += `- ✅ Status endpoint accessible.\n`;
+              comment += `- ✅ Root endpoint accessible.\n`;
+              comment += `- ✅ Deployment status endpoint accessible.\n`;
             } else {
               comment += `- ❌ One or more endpoints failed to respond.\n`;
             }
