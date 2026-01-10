@@ -1,7 +1,5 @@
-// This file has intentional linting errors
-const unusedVariable = "test";
-console.log("Hello, world");
+// This file has been fixed to pass linting
 function test() {
-  return "test" // Missing semicolon
+  return 'test';
 }
-const anotherVar = "double quotes"; // Should be single quotes
+const anotherVar = 'single quotes';
